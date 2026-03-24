@@ -35,6 +35,7 @@ class WorkflowState(TypedDict):
     abort_reason: Optional[str]
     
     pending_questions: List[str]
+    total_tech_questions: int
     tech_notes: List[str]
     
     final_story: Optional[str]
