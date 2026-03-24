@@ -4,7 +4,6 @@ from typing import Literal
 from pydantic import BaseModel, Field
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import interrupt
-from langgraph.checkpoint.memory import MemorySaver
 
 from state import WorkflowState, ExtractorOutput, ValidatorOutput, TechQuestionsOutput
 from llm_client import StructuredLLMClient
@@ -21,7 +20,7 @@ class FinalStoryOutput(BaseModel):
     story: str = Field(description="The fully synthesized Jira Agile Story")
 
 # ---------------------------------------------------------
-# Node Logic
+# Node Logic (Untouched for MVP Requirements)
 # ---------------------------------------------------------
 
 def phase0_extract(state: WorkflowState) -> dict:
@@ -56,14 +55,12 @@ def phase1_lock(state: WorkflowState) -> dict:
     if retries >= 3:
         return {"is_aborted": True, "abort_reason": f"Hard Abort: Failed 3 times on '{target}'."}
         
-    # Construct interrupt payload using previous rejection reason if it exists
     rejection = state.get("last_rejection_reason")
     if rejection:
         prompt_msg = f"[REJECTED]: {rejection}\nMissing '{target}'. Please provide a valid value:"
     else:
         prompt_msg = f"Missing '{target}'. Please provide a value:"
         
-    # Pause execution and request input from the human operator
     user_val = interrupt(prompt_msg)
     
     sys_prompt = PROMPTS["validator"]["system"].format(field=target)
@@ -75,12 +72,12 @@ def phase1_lock(state: WorkflowState) -> dict:
             target: result.normalized_value,
             "missing_fields": new_missing,
             "phase1_retries": 0,
-            "last_rejection_reason": None # Clear error state on success
+            "last_rejection_reason": None 
         }
     else:
         return {
             "phase1_retries": retries + 1,
-            "last_rejection_reason": result.rejection_reason # Save reason for the next loop
+            "last_rejection_reason": result.rejection_reason 
         }
 
 def phase2_tech_lead(state: WorkflowState) -> dict:
@@ -124,7 +121,7 @@ def phase3_synthesize(state: WorkflowState) -> dict:
 def phase3_feedback(state: WorkflowState) -> dict:
     retries = state.get("feedback_retries", 0)
     if retries >= 3:
-        return {"is_complete": True} # Force Commit
+        return {"is_complete": True}
         
     user_feedback = interrupt(f"\n[Agile Coach Output]:\n{state['final_story']}\n\nType 'confirm' to accept, or provide feedback for rewrite:")
     
@@ -155,7 +152,7 @@ def route_after_phase3(state: WorkflowState) -> Literal["phase3_synthesize", "__
     return END if state.get("is_complete") else "phase3_synthesize"
 
 # ---------------------------------------------------------
-# Graph Compilation
+# Graph Compilation (Refactored for Production)
 # ---------------------------------------------------------
 
 builder = StateGraph(WorkflowState)
@@ -175,5 +172,12 @@ builder.add_conditional_edges("phase2_ask_questions", route_after_phase2)
 builder.add_edge("phase3_synthesize", "phase3_feedback")
 builder.add_conditional_edges("phase3_feedback", route_after_phase3)
 
-memory = MemorySaver()
-graph = builder.compile(checkpointer=memory)
+def get_compiled_graph(checkpointer=None):
+    """
+    Returns the compiled graph. 
+    In K8s/Production, explicitly inject a persistent checkpointer 
+    (e.g., PostgresSaver) at the API layer.
+    """
+    if checkpointer is None:
+        raise ValueError("[FATAL] A persistent checkpointer must be provided for Stateful K8s deployments.")
+    return builder.compile(checkpointer=checkpointer)
