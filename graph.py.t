@@ -1,45 +1,14 @@
 import yaml
-import sys
-from pathlib import Path
 from typing import Literal
 from pydantic import BaseModel, Field
 from langgraph.graph import StateGraph, START, END
 
-# Import your modules
 from state import WorkflowState, ExtractorOutput, ValidatorOutput, TechQuestionsOutput
 from llm_client import StructuredLLMClient
 
-# ---------------------------------------------------------
-# Robust Configuration Loading (Zero Blind Spots)
-# ---------------------------------------------------------
-CURRENT_DIR = Path(__file__).parent.absolute()
-PROMPTS_FILE = CURRENT_DIR / "prompts.yaml"
+with open("prompts.yaml", "r", encoding="utf-8") as f:
+    PROMPTS = yaml.safe_load(f)
 
-def load_prompts(file_path: Path) -> dict:
-    if not file_path.exists():
-        print(f"[INIT FATAL] Prompts file not found at expected absolute path: {file_path}")
-        sys.exit(1)
-        
-    try:
-        with open(file_path, "r", encoding="utf-8-sig") as f:
-            data = yaml.safe_load(f)
-            
-        if not isinstance(data, dict):
-            print(f"[INIT FATAL] Invalid YAML structure in {file_path}. Expected dictionary.")
-            sys.exit(1)
-            
-        # Hard check for critical keys before the graph is ever compiled or run
-        if "extractor" not in data or "system" not in data["extractor"]:
-            print(f"[INIT FATAL] Key 'extractor.system' is missing in {file_path}.")
-            sys.exit(1)
-            
-        return data
-    except Exception as e:
-        print(f"[INIT FATAL] Failed to parse {file_path}: {e}")
-        sys.exit(1)
-
-# Enforce load on module initialization
-PROMPTS = load_prompts(PROMPTS_FILE)
 llm = StructuredLLMClient()
 
 class FinalStoryOutput(BaseModel):
