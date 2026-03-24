@@ -5,64 +5,65 @@ from graph import app
 
 def run_agent_step(payload: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Stateless Logic Controller:
-    Reconstructs the session from the payload, executes the graph, 
-    and returns the updated state to the client.
+    Stateless entry point. 
+    Receives JSON payload, executes logic, and returns updated state.
     """
     
     session_data = payload.get("session", {})
     user_message = payload.get("message", "").strip()
     
     try:
-        # Reconstruct Pydantic model from incoming dictionary
+        # Reconstruct session model from raw dictionary
+        # If session_data is empty, Pydantic handles default values (Phase.START)
         session = GroomingSession(**session_data)
         
-        # Inject current request context into the state
+        # Inject the new user context into the state
         session.last_user_message = user_message
         
-        # Stateless Invoke: Graph starts from START and routes via 'phase'
-        print(f"[SYSTEM] Processing current phase: {session.phase}")
+        # Execute LangGraph (Stateless Invoke)
+        # The graph starts from START and routes to the correct node via 'phase'
+        print(f"[SYSTEM] Orchestrating execution for phase: {session.phase}")
         final_state_output = app.invoke(session)
         
-        # LangGraph returns a dict or the model depending on configuration
-        # Ensuring we have a valid GroomingSession object for serialization
+        # Ensure the output is converted back to a validated Pydantic model
         if isinstance(final_state_output, dict):
             updated_session = GroomingSession(**final_state_output)
         else:
             updated_session = final_state_output
 
-        # Serialization for transmission back to client (K8s / Spyder)
+        # Serialization for return to Client (K8s or Local)
         return {
             "session": updated_session.model_dump(),
             "status": "success",
-            "message": _get_display_text(updated_session)
+            "feedback": _generate_ui_feedback(updated_session)
         }
 
     except Exception as e:
-        print(f"[FATAL] Pipeline Execution Error: {e}")
+        print(f"[FATAL] Runtime Error: {e}")
         return {
             "session": session_data,
             "status": "error",
             "error_detail": str(e)
         }
 
-def _get_display_text(session: GroomingSession) -> str:
+def _generate_ui_feedback(session: GroomingSession) -> str:
     """
-    Helper to determine the UI message based on the session's resulting phase.
+    Helper function to map the internal phase to a human-readable UI message.
     """
-    phase_messages = {
-        "clarifying": "I need more details. Please answer the missing fields.",
-        "reviewing_ac": "The Acceptance Criteria are ready for review. Type 'confirm' to finish.",
-        "done": "The Jira Story has been generated successfully.",
+    feedback_map = {
+        "clarifying": "Requirement incomplete. Please answer the clarification questions.",
+        "refining_tech": "Analyzing technical feasibility. Please wait for specific tech lead questions.",
+        "reviewing_ac": "Draft Acceptance Criteria generated. Type 'confirm' or suggest edits.",
+        "done": "Grooming complete. Your Jira Story is ready for export."
     }
-    return phase_messages.get(session.phase, "Analyzing requirements...")
+    return feedback_map.get(session.phase, "Processing your request...")
 
 if __name__ == "__main__":
-    # Local Simulation for Spyder environment
-    mock_payload = {
+    # Local simulation for Spyder testing
+    mock_input = {
         "session": {}, 
-        "message": "I want to implement a dual-factor authentication system."
+        "message": "As a user, I want to reset my password using my phone number."
     }
     
-    result = run_agent_step(mock_payload)
+    result = run_agent_step(mock_input)
     print(json.dumps(result, indent=2))
