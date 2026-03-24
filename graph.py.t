@@ -18,8 +18,8 @@ def route_by_phase(state: GroomingSession) -> Literal[
     "__end__"
 ]:
     """
-    Stateless Router: Logic to resume the graph from the correct node 
-    based on the state passed by the client.
+    Stateless Router: Determines the entry node based on the current phase.
+    This is the core of the 'Resume' capability in K8s without a database.
     """
     phase = state.phase
 
@@ -41,28 +41,31 @@ def route_by_phase(state: GroomingSession) -> Literal[
     return END
 
 def create_graph():
-    # Initialize the graph with the stateless Pydantic model
+    # Initialize the graph with the stateless Pydantic State
     workflow = StateGraph(GroomingSession)
 
-    # Define Nodes
+    # 1. Register Nodes
     workflow.add_node("extractor", extraction_node)
     workflow.add_node("clarifier", clarification_node)
     workflow.add_node("tech_lead", tech_refinement_node)
     workflow.add_node("agile_coach", ac_review_node)
     workflow.add_node("story_writer", final_story_node)
 
-    # Dynamic Routing from START
+    # 2. Add Conditional Entry Point (The Stateless Jump)
+    # The graph always starts here and jumps to the correct node based on 'phase'
     workflow.add_conditional_edges(START, route_by_phase)
 
-    # Edge Logic: Every node MUST go to END to return state to the caller
+    # 3. Add Edges to END
+    # Every node MUST return to END so the API can send the updated state back to the client
     workflow.add_edge("extractor", END)
     workflow.add_edge("clarifier", END)
     workflow.add_edge("tech_lead", END)
     workflow.add_edge("agile_coach", END)
     workflow.add_edge("story_writer", END)
 
-    # CRITICAL: Compile without checkpointer for K8s/Stateless compatibility
+    # CRITICAL: Compilation without any checkpointer/persistence
+    # This ensures true statelessness for production environments
     return workflow.compile()
 
-# Global app instance
+# Singleton instance of the graph
 app = create_graph()
