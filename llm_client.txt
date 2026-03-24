@@ -1,0 +1,82 @@
+import uuid
+import ssl
+import httpx
+import truststore
+import openai
+from pydantic import BaseModel, ValidationError
+from typing import Type, TypeVar
+from token_jwt import get_token
+
+T = TypeVar('T', bound=BaseModel)
+
+class StructuredLLMClient:
+    def __init__(
+        self, 
+        base_url: str = "https://gaip-api-uat.hsbc-12152296-gaipuat-dev.dev.gcp.cloud.hk.hsbc/etiv-ssvc-aigateway-ea-chatcompletion-uat-internal-proxy/v1/api/v1/", 
+        user_id: str = "UC0004882", 
+        model_name: str = "GPT-4.1"
+    ):
+        self.base_url = base_url
+        self.user_id = user_id
+        self.model_name = model_name
+        
+        # Using truststore for enterprise-grade SSL handling
+        ctx = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        
+        self.httpx_client = httpx.Client(
+            http2=True,
+            verify=ctx,
+            timeout=60.0
+        )
+        
+        self.client = openai.OpenAI(
+            api_key="proxy-dummy-key",
+            http_client=self.httpx_client,
+            base_url=self.base_url
+        )
+
+    def query(self, system_prompt: str, user_prompt: str, response_model: Type[T]) -> T:
+        """
+        Executes a chat completion request with native structured output parsing.
+        Removes the need for manual JSON schema injection in prompts.
+        """
+        current_jwt = get_token()
+        
+        per_request_headers = {
+            "X-HSBC-E2E-Trust-Token": current_jwt,
+            "Content-Type": "application/json",
+            "x-correlation-id": str(uuid.uuid4()),
+            "x-usersession-id": str(uuid.uuid4())
+        }
+
+        try:
+            # Native Structured Outputs: enforces 100% schema adherence at the engine level
+            response = self.client.beta.chat.completions.parse(
+                model=self.model_name,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                user=self.user_id,
+                extra_headers=per_request_headers,
+                response_format=response_model,
+                max_tokens=1500,
+                temperature=0.0 # Deterministic output for requirements engineering
+            )
+            
+            parsed_result = response.choices[0].message.parsed
+            
+            if parsed_result is None:
+                refusal_msg = response.choices[0].message.refusal
+                raise ValueError(f"LLM Refused request: {refusal_msg}")
+                
+            return parsed_result
+            
+        except openai.APIStatusError as e:
+            # Fatal API errors (Rate limits, Authentication, etc.)
+            print(f"[FATAL] API Error: {e.status_code} - {e.response.text}")
+            raise
+        except (ValidationError, Exception) as e:
+            # Handles parsing failures or unexpected connection drops
+            print(f"[FATAL] Runtime Error: {e}")
+            raise
