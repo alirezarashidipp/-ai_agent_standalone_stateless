@@ -1,11 +1,12 @@
 from enum import Enum
 from typing import List, Optional
 from pydantic import BaseModel, Field, ConfigDict
+from schemas import JiraAnalysis  # Importing your existing schema as the source
 
 class GroomingPhase(str, Enum):
     """
-    Defining explicit phases for stateless routing.
-    Each phase maps to a specific node in the graph.
+    Explicit phases for stateless routing.
+    Each phase correlates to a specific Node in LangGraph.
     """
     START = "start"
     CLARIFYING = "clarifying"
@@ -14,54 +15,38 @@ class GroomingPhase(str, Enum):
     FINALIZING = "finalizing"
     DONE = "done"
 
-class CoreElements(BaseModel):
-    """
-    The '3Ws' requirements structure.
-    """
-    who: Optional[str] = None
-    what: Optional[str] = None
-    why: Optional[str] = None
-
-class FinalStory(BaseModel):
-    title: str
-    description: str
-    acceptance_criteria: List[str]
-    technical_notes: Optional[str] = None
-
 class GroomingSession(BaseModel):
     """
-    The main State object. This is what gets serialized to JSON 
-    and sent back to the client.
+    The Master State object. 
+    This is the ONLY object transferred between Client and Kubernetes/Spyder.
     """
-    # Metadata for Routing
+    # 1. Flow Control
     phase: GroomingPhase = Field(default=GroomingPhase.START)
     
-    # Requirement state (The Memory)
-    core: CoreElements = Field(default_factory=CoreElements)
+    # 2. Core Data (Using your JiraAnalysis from schemas.py)
+    # This stores everything: Who, What, Why, Impact, AC, and Questions.
+    analysis: Optional[JiraAnalysis] = None
     
-    # Technical Refinement state
-    tech_questions: List[str] = Field(default_factory=list)
+    # 3. Context & Tracking
+    last_user_message: str = ""
     tech_question_idx: int = 0
     
-    # Acceptance Criteria state
-    ac_draft: List[str] = Field(default_factory=list)
-    
-    # Final Result
-    final_story: Optional[FinalStory] = None
-    
-    # Per-request Input (Stateless Context)
-    last_user_message: str = ""
-    
-    # Pydantic V2 Configuration
+    # 4. Final Output storage
+    final_jira_story: Optional[str] = None
+
+    # Pydantic V2 Configuration for production performance and safety
     model_config = ConfigDict(
         use_enum_values=True,
         validate_assignment=True,
+        populate_by_name=True,
         arbitrary_types_allowed=True
     )
 
-    def to_json(self) -> str:
+    def serialize(self) -> str:
+        """Converts state to JSON string for client-side storage."""
         return self.model_dump_json()
 
     @classmethod
-    def from_dict(cls, data: dict) -> "GroomingSession":
+    def deserialize(cls, data: dict) -> "GroomingSession":
+        """Reconstructs state from client-provided dictionary."""
         return cls(**data)
