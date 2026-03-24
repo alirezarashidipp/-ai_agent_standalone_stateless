@@ -12,7 +12,7 @@ from llm_client import StructuredLLMClient
 # Configuration Loading & Path Resolution
 # ---------------------------------------------------------
 CURRENT_DIR = Path(__file__).parent.absolute()
-PROMPTS_FILE = CURRENT_DIR / "prompts.yaml"
+PROMPTS_FILE = CURRENT_DIR / "prompts_agent.yaml"
 
 def load_prompts(file_path: Path) -> dict:
     if not file_path.exists():
