@@ -1,8 +1,12 @@
 from enum import Enum
 from typing import List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 class GroomingPhase(str, Enum):
+    """
+    Defining explicit phases for stateless routing.
+    Each phase maps to a specific node in the graph.
+    """
     START = "start"
     CLARIFYING = "clarifying"
     REFINING_TECH = "refining_tech"
@@ -11,6 +15,9 @@ class GroomingPhase(str, Enum):
     DONE = "done"
 
 class CoreElements(BaseModel):
+    """
+    The '3Ws' requirements structure.
+    """
     who: Optional[str] = None
     what: Optional[str] = None
     why: Optional[str] = None
@@ -22,32 +29,39 @@ class FinalStory(BaseModel):
     technical_notes: Optional[str] = None
 
 class GroomingSession(BaseModel):
-    # Process tracking
+    """
+    The main State object. This is what gets serialized to JSON 
+    and sent back to the client.
+    """
+    # Metadata for Routing
     phase: GroomingPhase = Field(default=GroomingPhase.START)
     
-    # Requirements state
+    # Requirement state (The Memory)
     core: CoreElements = Field(default_factory=CoreElements)
     
-    # Phase 2: Tech refinement state
+    # Technical Refinement state
     tech_questions: List[str] = Field(default_factory=list)
     tech_question_idx: int = 0
     
-    # Phase 3: Acceptance Criteria state
+    # Acceptance Criteria state
     ac_draft: List[str] = Field(default_factory=list)
     
-    # Outputs
+    # Final Result
     final_story: Optional[FinalStory] = None
     
-    # Transient fields (Inputs from current request)
+    # Per-request Input (Stateless Context)
     last_user_message: str = ""
     
-    class Config:
-        use_enum_values = True
-        validate_assignment = True
+    # Pydantic V2 Configuration
+    model_config = ConfigDict(
+        use_enum_values=True,
+        validate_assignment=True,
+        arbitrary_types_allowed=True
+    )
 
-# Helper for API layer
-def session_to_json(session: GroomingSession) -> str:
-    return session.model_dump_json()
+    def to_json(self) -> str:
+        return self.model_dump_json()
 
-def json_to_session(data: dict) -> GroomingSession:
-    return GroomingSession(**data)
+    @classmethod
+    def from_dict(cls, data: dict) -> "GroomingSession":
+        return cls(**data)
