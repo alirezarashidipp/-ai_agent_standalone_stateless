@@ -18,7 +18,8 @@ def route_by_phase(state: GroomingSession) -> Literal[
     "__end__"
 ]:
     """
-    Stateless Router: Decides which node to execute based on the current phase.
+    Stateless Router: Logic to resume the graph from the correct node 
+    based on the state passed by the client.
     """
     phase = state.phase
 
@@ -40,28 +41,28 @@ def route_by_phase(state: GroomingSession) -> Literal[
     return END
 
 def create_graph():
-    # Initialize the graph with the Pydantic State model
+    # Initialize the graph with the stateless Pydantic model
     workflow = StateGraph(GroomingSession)
 
-    # Add Nodes
+    # Define Nodes
     workflow.add_node("extractor", extraction_node)
     workflow.add_node("clarifier", clarification_node)
     workflow.add_node("tech_lead", tech_refinement_node)
     workflow.add_node("agile_coach", ac_review_node)
     workflow.add_node("story_writer", final_story_node)
 
-    # Core Logic: Start -> Router
+    # Dynamic Routing from START
     workflow.add_conditional_edges(START, route_by_phase)
 
-    # Node Transitions
-    # After each node, we return to END so the API can send the state to the client
+    # Edge Logic: Every node MUST go to END to return state to the caller
     workflow.add_edge("extractor", END)
     workflow.add_edge("clarifier", END)
     workflow.add_edge("tech_lead", END)
     workflow.add_edge("agile_coach", END)
     workflow.add_edge("story_writer", END)
 
-    # Compile without any checkpointer for true statelessness
+    # CRITICAL: Compile without checkpointer for K8s/Stateless compatibility
     return workflow.compile()
 
+# Global app instance
 app = create_graph()
