@@ -1,42 +1,50 @@
-from enum import Enum
-from typing import List, Optional
+# state.py
+from typing import TypedDict, List, Optional
 from pydantic import BaseModel, Field
 
-class GroomingPhase(str, Enum):
-    PHASE0_EXTRACT = "phase0_extract"
-    PHASE1_LOCK = "phase1_lock"
-    PHASE2_TECH_LEAD = "phase2_tech_lead"
-    PHASE2_ASK = "phase2_ask"
-    PHASE3_SYNTHESIZE = "phase3_synthesize"
-    PHASE3_FEEDBACK = "phase3_feedback"
-    DONE = "done"
-    ABORTED = "aborted"
+# ---------------------------------------------------------
+# Pydantic Models for LLM Client (Structured Outputs)
+# ---------------------------------------------------------
+class ExtractorOutput(BaseModel):
+    who: Optional[str] = Field(None, description="The persona or user role")
+    what: Optional[str] = Field(None, description="The core action or feature")
+    why: Optional[str] = Field(None, description="The business value or reason")
+    ac_evidence: Optional[str] = Field(None, description="Acceptance criteria or constraints")
 
-class GroomingSession(BaseModel):
-    # Routing & Core Flow
-    phase: GroomingPhase = Field(default=GroomingPhase.PHASE0_EXTRACT)
-    last_user_message: str = ""
+class ValidatorOutput(BaseModel):
+    is_valid: bool
+    normalized_value: Optional[str] = Field(None)
+    rejection_reason: Optional[str] = Field(None)
+
+class TechQuestionsOutput(BaseModel):
+    questions: List[str]
+
+# ---------------------------------------------------------
+# LangGraph State Definition
+# ---------------------------------------------------------
+class WorkflowState(TypedDict):
+    # Phase 0: Initial Extraction
+    raw_input: str
+    who: Optional[str]
+    what: Optional[str]
+    why: Optional[str]
+    ac_evidence: Optional[str]
     
-    # Phase 0/1: Triad Core
-    raw_input: str = ""
-    who: Optional[str] = None
-    what: Optional[str] = None
-    why: Optional[str] = None
-    ac_evidence: Optional[str] = None
-    missing_fields: List[str] = Field(default_factory=list)
-    
-    # Phase 1: Triad Lock Controls
-    phase1_retries: int = 0
-    last_rejection_reason: Optional[str] = None
-    is_aborted: bool = False
-    abort_reason: Optional[str] = None
+    # Phase 1: JIT Validation
+    missing_fields: List[str]
+    current_field_target: Optional[str]
+    phase1_retries: int
+    last_rejection_reason: Optional[str] # Added for rejection tracing
+    is_aborted: bool
+    abort_reason: Optional[str]
     
     # Phase 2: Tech Grooming
-    pending_questions: List[str] = Field(default_factory=list)
-    tech_notes: List[str] = Field(default_factory=list)
+    pending_questions: List[str]
+    current_question: Optional[str]
+    tech_notes: List[str]
     
-    # Phase 3: Synthesis & HITL
-    final_story: Optional[str] = None
-    feedback_retries: int = 0
-    feedback_raw: Optional[str] = None
-    is_complete: bool = False
+    # Phase 3: Synthesis & Feedback
+    final_story: Optional[str]
+    feedback_retries: int
+    is_complete: bool
+    feedback_raw: Optional[str]
