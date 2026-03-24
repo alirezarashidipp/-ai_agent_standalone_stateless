@@ -1,15 +1,14 @@
-# state.py
 from typing import TypedDict, List, Optional
 from pydantic import BaseModel, Field
 
 # ---------------------------------------------------------
-# Pydantic Models for LLM Client (Structured Outputs)
+# Pydantic Models
 # ---------------------------------------------------------
 class ExtractorOutput(BaseModel):
-    who: Optional[str] = Field(None, description="The persona or user role")
-    what: Optional[str] = Field(None, description="The core action or feature")
-    why: Optional[str] = Field(None, description="The business value or reason")
-    ac_evidence: Optional[str] = Field(None, description="Acceptance criteria or constraints")
+    who: Optional[str] = Field(None)
+    what: Optional[str] = Field(None)
+    why: Optional[str] = Field(None)
+    ac_evidence: Optional[str] = Field(None)
 
 class ValidatorOutput(BaseModel):
     is_valid: bool
@@ -20,31 +19,31 @@ class TechQuestionsOutput(BaseModel):
     questions: List[str]
 
 # ---------------------------------------------------------
-# LangGraph State Definition
+# LangGraph State
 # ---------------------------------------------------------
 class WorkflowState(TypedDict):
-    # Phase 0: Initial Extraction
     raw_input: str
     who: Optional[str]
     what: Optional[str]
     why: Optional[str]
     ac_evidence: Optional[str]
     
-    # Phase 1: JIT Validation
     missing_fields: List[str]
-    current_field_target: Optional[str]
     phase1_retries: int
-    last_rejection_reason: Optional[str] # Added for rejection tracing
+    last_rejection_reason: Optional[str]
     is_aborted: bool
     abort_reason: Optional[str]
     
-    # Phase 2: Tech Grooming
     pending_questions: List[str]
-    current_question: Optional[str]
     tech_notes: List[str]
     
-    # Phase 3: Synthesis & Feedback
     final_story: Optional[str]
     feedback_retries: int
     is_complete: bool
     feedback_raw: Optional[str]
+
+    # --- Stateless Control Fields ---
+    action_required: bool
+    action_prompt: Optional[str]
+    user_injected_response: Optional[str]
+    current_phase: str
