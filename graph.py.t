@@ -2,70 +2,58 @@ from typing import Literal
 from langgraph.graph import StateGraph, END, START
 from state import GroomingSession, GroomingPhase
 from nodes import (
-    extraction_node,
-    clarification_node,
-    tech_refinement_node,
-    ac_review_node,
-    final_story_node
+    phase0_extractor,
+    phase1_lock,
+    phase2_tech_lead,
+    phase2_ask,
+    phase3_synthesize,
+    phase3_feedback
 )
 
 def route_by_phase(state: GroomingSession) -> Literal[
-    "extractor", 
-    "clarifier", 
-    "tech_lead", 
-    "agile_coach", 
-    "story_writer", 
+    "phase0", 
+    "phase1", 
+    "phase2_init", 
+    "phase2_loop", 
+    "phase3_init", 
+    "phase3_loop", 
     "__end__"
 ]:
     """
-    Stateless Router: Determines the entry node based on the current phase.
-    This is the core of the 'Resume' capability in K8s without a database.
+    Deterministic Router: Maps the exact FSM phase to the corresponding computational node.
     """
-    phase = state.phase
-
-    if phase == GroomingPhase.START:
-        return "extractor"
+    phase_map = {
+        GroomingPhase.PHASE0_EXTRACT: "phase0",
+        GroomingPhase.PHASE1_LOCK: "phase1",
+        GroomingPhase.PHASE2_TECH_LEAD: "phase2_init",
+        GroomingPhase.PHASE2_ASK: "phase2_loop",
+        GroomingPhase.PHASE3_SYNTHESIZE: "phase3_init",
+        GroomingPhase.PHASE3_FEEDBACK: "phase3_loop",
+        GroomingPhase.DONE: END,
+        GroomingPhase.ABORTED: END
+    }
     
-    if phase == GroomingPhase.CLARIFYING:
-        return "clarifier"
-    
-    if phase == GroomingPhase.REFINING_TECH:
-        return "tech_lead"
-    
-    if phase == GroomingPhase.REVIEWING_AC:
-        return "agile_coach"
-    
-    if phase == GroomingPhase.FINALIZING:
-        return "story_writer"
-    
-    return END
+    return phase_map.get(state.phase, END)
 
 def create_graph():
-    # Initialize the graph with the stateless Pydantic State
     workflow = StateGraph(GroomingSession)
 
-    # 1. Register Nodes
-    workflow.add_node("extractor", extraction_node)
-    workflow.add_node("clarifier", clarification_node)
-    workflow.add_node("tech_lead", tech_refinement_node)
-    workflow.add_node("agile_coach", ac_review_node)
-    workflow.add_node("story_writer", final_story_node)
+    # Register Nodes
+    workflow.add_node("phase0", phase0_extractor)
+    workflow.add_node("phase1", phase1_lock)
+    workflow.add_node("phase2_init", phase2_tech_lead)
+    workflow.add_node("phase2_loop", phase2_ask)
+    workflow.add_node("phase3_init", phase3_synthesize)
+    workflow.add_node("phase3_loop", phase3_feedback)
 
-    # 2. Add Conditional Entry Point (The Stateless Jump)
-    # The graph always starts here and jumps to the correct node based on 'phase'
+    # Core Routing Logic
     workflow.add_conditional_edges(START, route_by_phase)
 
-    # 3. Add Edges to END
-    # Every node MUST return to END so the API can send the updated state back to the client
-    workflow.add_edge("extractor", END)
-    workflow.add_edge("clarifier", END)
-    workflow.add_edge("tech_lead", END)
-    workflow.add_edge("agile_coach", END)
-    workflow.add_edge("story_writer", END)
+    # Force Stateless Exit
+    for node in ["phase0", "phase1", "phase2_init", "phase2_loop", "phase3_init", "phase3_loop"]:
+        workflow.add_edge(node, END)
 
-    # CRITICAL: Compilation without any checkpointer/persistence
-    # This ensures true statelessness for production environments
+    # Compile without Checkpointer (Zero-Persistence)
     return workflow.compile()
 
-# Singleton instance of the graph
 app = create_graph()
