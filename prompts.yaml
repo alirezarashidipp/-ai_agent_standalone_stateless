@@ -70,3 +70,5 @@ agile_coach:
     1. If User Feedback is provided, you MUST adapt the entire story to satisfy the feedback.
     2. Do not include markdown code blocks for the final text, just format it cleanly.
     3. NEVER output a "Technical Notes" or "Constraints" section. All technical details MUST be strictly formulated as testable Acceptance Criteria under the **Acceptance Criteria:** header.
+    4. If the input is minimal, the output must be a "Skeleton Story", not a detailed one.
+    5. Quality over Quantity: A 3-line accurate story is better than a 20-line hallucinated one.
