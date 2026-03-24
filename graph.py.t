@@ -9,21 +9,21 @@ from state import WorkflowState, ExtractorOutput, ValidatorOutput, TechQuestions
 from llm_client import StructuredLLMClient
 
 # ---------------------------------------------------------
-# Configuration Loading
+# Configuration Loading & Path Resolution
 # ---------------------------------------------------------
 CURRENT_DIR = Path(__file__).parent.absolute()
 PROMPTS_FILE = CURRENT_DIR / "prompts.yaml"
 
 def load_prompts(file_path: Path) -> dict:
     if not file_path.exists():
-        print(f"[INIT FATAL] Prompts file not found: {file_path}")
+        print(f"[INIT FATAL] Prompts file not found at: {file_path}")
         sys.exit(1)
     try:
         with open(file_path, "r", encoding="utf-8-sig") as f:
             data = yaml.safe_load(f)
         return data
     except Exception as e:
-        print(f"[INIT FATAL] Failed to parse prompts: {e}")
+        print(f"[INIT FATAL] YAML Parse Error: {e}")
         sys.exit(1)
 
 PROMPTS = load_prompts(PROMPTS_FILE)
@@ -95,7 +95,6 @@ def phase2_tech_lead(state: WorkflowState) -> dict:
     sys_prompt = PROMPTS["tech_lead"]["system"].format(what=state["what"], why=state["why"])
     result = llm.query(sys_prompt, "Review and generate technical questions.", TechQuestionsOutput)
     
-   
     return {
         "pending_questions": result.questions, 
         "total_tech_questions": len(result.questions),
@@ -109,21 +108,26 @@ def phase2_ask_questions(state: WorkflowState) -> dict:
     if not questions:
         return {"current_phase": "phase3"}
     
-    # محاسبه شماره سوال فعلی
     current_idx = (total - len(questions)) + 1
     current_q = questions[0]
     
     if not state.get("user_injected_response"):
-        instruction = "\n(Note: This is optional. Type 'skip' or 'I don't know' to move to the next question)"
+        instruction = "\n(Note: This is optional. Type 'skip' to move to the next question)"
         return {
             "action_required": True, 
             "action_prompt": f"🛠 [Technical Lead Question {current_idx}/{total}]:\n{current_q}{instruction}"
         }
 
-    user_answer = state["user_injected_response"]
-    if user_answer.strip().lower() in ["skip", "i don't know", "idk", "next", "none"]:
-        return {"pending_questions": questions[1:], "user_injected_response": None, "action_required": False,
-                "current_phase": "phase2_ask" if len(questions) > 1 else "phase3"}
+    user_answer = state["user_injected_response"].strip().lower()
+    
+    # Strict Skip Logic (Hardcoded to bypass LLM and ignore "I don't know")
+    if user_answer == "skip":
+        return {
+            "pending_questions": questions[1:], 
+            "user_injected_response": None, 
+            "action_required": False,
+            "current_phase": "phase2_ask" if len(questions) > 1 else "phase3"
+        }
 
     sys_prompt = PROMPTS["inline_validator"]["system"].format(question=current_q, answer=user_answer)
     result = llm.query(sys_prompt, f"Evaluate answer: {user_answer}", ValidatorOutput)
@@ -132,8 +136,14 @@ def phase2_ask_questions(state: WorkflowState) -> dict:
     if result.is_valid and result.normalized_value:
         new_notes.append(f"Constraint derived from '{current_q}': {result.normalized_value}")
         
-    return {"pending_questions": questions[1:], "tech_notes": new_notes, "user_injected_response": None, 
-            "action_required": False, "current_phase": "phase2_ask" if len(questions) > 1 else "phase3"}
+    # Moving to next question regardless of validity (unless you want to loop on invalid)
+    return {
+        "pending_questions": questions[1:], 
+        "tech_notes": new_notes, 
+        "user_injected_response": None, 
+        "action_required": False, 
+        "current_phase": "phase2_ask" if len(questions) > 1 else "phase3"
+    }
 
 def phase3_synthesize(state: WorkflowState) -> dict:
     if state.get("final_story") and not state.get("feedback_raw"):
@@ -149,7 +159,9 @@ def phase3_synthesize(state: WorkflowState) -> dict:
 
 def phase3_feedback(state: WorkflowState) -> dict:
     retries = state.get("feedback_retries", 0)
-    if retries >= 3 or (state.get("user_injected_response") and state["user_injected_response"].strip().lower() == "confirm"):
+    user_input = (state.get("user_injected_response") or "").strip().lower()
+    
+    if retries >= 3 or user_input == "confirm":
         return {"is_complete": True, "action_required": False}
     
     if not state.get("user_injected_response"):
@@ -160,12 +172,14 @@ def phase3_feedback(state: WorkflowState) -> dict:
             "user_injected_response": None, "action_required": False, "current_phase": "phase3"}
 
 # ---------------------------------------------------------
-# Routing logic remains the same
+# Graph Compilation
 # ---------------------------------------------------------
 def route_start(state: WorkflowState) -> str:
     phase = state.get("current_phase", "phase0")
-    routes = {"phase0": "phase0_extract", "phase1": "phase1_lock", "phase2": "phase2_tech_lead", 
-              "phase2_ask": "phase2_ask_questions", "phase3": "phase3_synthesize", "phase3_feedback": "phase3_feedback"}
+    routes = {
+        "phase0": "phase0_extract", "phase1": "phase1_lock", "phase2": "phase2_tech_lead", 
+        "phase2_ask": "phase2_ask_questions", "phase3": "phase3_synthesize", "phase3_feedback": "phase3_feedback"
+    }
     return routes.get(phase, "phase0_extract")
 
 builder = StateGraph(WorkflowState)
