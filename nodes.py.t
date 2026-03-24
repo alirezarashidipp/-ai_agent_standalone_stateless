@@ -2,79 +2,77 @@ from typing import Dict, Any
 from state import GroomingSession, GroomingPhase
 from schemas import JiraAnalysis
 from llm_client import StructuredLLMClient
-import logging
 
-logger = logging.getLogger(__name__)
+# Initialize Lead Engineer's LLM Client
 llm = StructuredLLMClient()
 
 def extraction_node(state: GroomingSession) -> Dict[str, Any]:
     """
-    Phase 0: Extracts requirement components using JiraAnalysis schema.
-    Updates the phase to CLARIFYING or REFINING_TECH based on completeness.
+    Phase 0: Requirement Extraction.
+    Uses the JiraAnalysis schema to parse the 3Ws, Impact, and AC.
     """
-    system_prompt = "You are a Senior Business Analyst. Extract Who, What, and Why."
-    user_prompt = f"Current Input: {state.last_user_message}\nExisting Context: {state.core.model_dump_json()}"
-
-    # Using Structured Output to ensure schema adherence
-    analysis: JiraAnalysis = llm.query(system_prompt, user_prompt, JiraAnalysis)
-
-    # Partial update logic
-    if analysis.who.identified:
-        state.core.who = analysis.who.evidence
-    if analysis.what.identified:
-        state.core.what = analysis.what.intent_evidence
-    if analysis.why.identified:
-        state.core.why = analysis.why.value_evidence
+    print(f"[NODE] Executing Extraction for phase: {state.phase}")
     
-    # State Transition
-    is_complete = all([analysis.who.identified, analysis.what.identified, analysis.why.identified])
+    system_prompt = "You are a Senior Requirement Engineer. Analyze the input for Jira Story elements."
+    # Context injection: Current message + existing analysis state
+    user_prompt = f"User Input: {state.last_user_message}\nExisting Context: {state.analysis.model_dump_json() if state.analysis else '{}'}"
+
+    # Structured Output: LLM strictly follows your schemas.py
+    new_analysis: JiraAnalysis = llm.query(system_prompt, user_prompt, JiraAnalysis)
+
+    # State Update: Direct composition
+    state.analysis = new_analysis
     
-    if is_complete:
-        state.phase = GroomingPhase.REFINING_TECH
-    else:
-        state.tech_questions = analysis.grooming_questions
+    # Transition Logic: 
+    # Based on your schema's 'what.identified' and 'enforce_data_integrity' validator
+    if not new_analysis.what.identified or new_analysis.grooming_questions:
         state.phase = GroomingPhase.CLARIFYING
+    else:
+        state.phase = GroomingPhase.REFINING_TECH
 
     return state.model_dump()
 
 def clarification_node(state: GroomingSession) -> Dict[str, Any]:
     """
-    Phase 1: Processes user feedback for missing core elements.
-    Reruns extraction logic with new context.
+    Phase 1: Clarification. 
+    In a stateless loop, this node simply re-triggers extraction with new user input.
     """
+    print("[NODE] Executing Clarification")
+    # Logic: Merge new answer into the analysis via extraction
     return extraction_node(state)
 
 def tech_refinement_node(state: GroomingSession) -> Dict[str, Any]:
     """
-    Phase 2: Tech Lead analyzes technical gaps.
+    Phase 2: Tech Lead Analysis.
+    Decides if more technical details are needed or moves to AC Review.
     """
-    if not state.tech_questions:
-        # Simulate Tech Lead analysis
-        state.tech_questions = ["What is the expected concurrent user count?", "Is there a specific DB preference?"]
-        state.phase = GroomingPhase.REFINING_TECH
+    # Logic based on your ActionCategory and DetailLevel in schemas.py
+    if state.analysis.what.the_level_of_details_in_intent == "no_details":
+        state.phase = GroomingPhase.REFINING_TECH # Keep asking tech questions
     else:
-        # Move to AC phase once tech questions are handled
         state.phase = GroomingPhase.REVIEWING_AC
         
     return state.model_dump()
 
 def ac_review_node(state: GroomingSession) -> Dict[str, Any]:
     """
-    Phase 3: Agile Coach generates/refines Acceptance Criteria.
-    Waiting for 'confirm' message to proceed.
+    Phase 3: Agile Coach Review.
+    Final check for Agile Standards defined in your schema.
     """
     if "confirm" in state.last_user_message.lower():
         state.phase = GroomingPhase.FINALIZING
     else:
-        if not state.ac_draft:
-            state.ac_draft = ["AC 1: Must support OAuth2", "AC 2: Response time < 200ms"]
+        # If not confirmed, we stay in REVIEWING_AC
         state.phase = GroomingPhase.REVIEWING_AC
         
     return state.model_dump()
 
 def final_story_node(state: GroomingSession) -> Dict[str, Any]:
     """
-    Phase 4: Final output generation.
+    Phase 4: Story Generation.
+    Finalizes the process and marks it as DONE.
     """
     state.phase = GroomingPhase.DONE
+    # Formatting the final string based on all extracted fields
+    state.final_jira_story = f"STORY: {state.analysis.what.intent_evidence}..."
     return state.model_dump()
