@@ -1,84 +1,85 @@
-import json
-from typing import Any, Dict
-from state import GroomingSession, GroomingPhase
-from graph import app
+# main.py
+import uuid
+from langgraph.types import Command
+from graph import graph
 
-def run_pipeline_step(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Stateless Logic Controller.
-    Takes client payload, reconstructs state, executes one tick of the FSM, and serializes the result.
-    """
-    session_data = payload.get("session", {})
-    user_message = payload.get("message", "").strip()
+def run_pipeline():
+    thread_id = str(uuid.uuid4())
+    config = {"configurable": {"thread_id": thread_id}}
     
-    try:
-        session = GroomingSession(**session_data)
-        session.last_user_message = user_message
-        
-        # Guard clause for terminal states
-        if session.phase in [GroomingPhase.DONE, GroomingPhase.ABORTED]:
-            return {
-                "session": session.model_dump(),
-                "status": "terminated",
-                "message": "Session has already reached a terminal state."
-            }
-            
-        final_state_output = app.invoke(session)
-        
-        updated_session = GroomingSession(**final_state_output) if isinstance(final_state_output, dict) else final_state_output
+    print("=== Jira Story Generator Pipeline (MVP) ===")
+    raw_text = input("Enter raw unstructured requirement: ")
+    
+    if not raw_text.strip():
+        print("[FATAL] Input cannot be empty. Aborting.")
+        return
 
-        # State rendering for UI
-        display_message = _render_ui_message(updated_session)
+    # Strict initialization of all TypedDict keys to prevent Graph execution crashes
+    initial_state = {
+        "raw_input": raw_text,
+        "who": None,
+        "what": None,
+        "why": None,
+        "ac_evidence": None,
+        "missing_fields": [],
+        "current_field_target": None,
+        "phase1_retries": 0,
+        "last_rejection_reason": None, # Initialized to prevent KeyError
+        "is_aborted": False,
+        "abort_reason": None,
+        "pending_questions": [],
+        "current_question": None,
+        "tech_notes": [],
+        "final_story": None,
+        "feedback_retries": 0,
+        "is_complete": False,
+        "feedback_raw": ""
+    }
 
-        return {
-            "session": updated_session.model_dump(),
-            "status": "success",
-            "message": display_message
-        }
+    current_input = initial_state
 
-    except Exception as e:
-        print(f"[FATAL] System fault during pipeline execution: {e}")
-        return {
-            "session": session_data,
-            "status": "error",
-            "error_detail": str(e)
-        }
+    while True:
+        try:
+            # Stream events until completion or interrupt
+            for event in graph.stream(current_input, config=config):
+                for node_name, state_update in event.items():
+                    print(f"[Trace] Node executed -> {node_name}")
+                    
+                    # Guardrail: LangGraph v0.2+ yields a tuple for '__interrupt__' events. 
+                    if not isinstance(state_update, dict):
+                        continue
+                    
+                    if state_update.get("is_aborted"):
+                        print(f"\n[ABORTED] {state_update.get('abort_reason')}")
+                        return
+                        
+                    if state_update.get("is_complete"):
+                        print("\n=== FINAL AGILE STORY ===")
+                        print(state_update.get("final_story", "No story generated."))
+                        print("=========================")
+                        return
 
-def _render_ui_message(state: GroomingSession) -> str:
-    """
-    Translates the internal state and FSM constraints into a user-facing prompt.
-    """
-    if state.phase == GroomingPhase.ABORTED:
-        return f"[SYSTEM ABORT] {state.abort_reason}"
-        
-    if state.phase == GroomingPhase.PHASE1_LOCK:
-        base_msg = f"Missing core requirement: '{state.missing_fields[0].upper()}'. Please provide it."
-        if state.last_rejection_reason:
-            return f"[Validation Failed] {state.last_rejection_reason}\n\n{base_msg} (Attempt {state.phase1_retries}/3)"
-        return base_msg
-        
-    if state.phase == GroomingPhase.PHASE2_ASK:
-        if state.pending_questions:
-            return f"[Tech Lead] {state.pending_questions[0]}"
-            
-    if state.phase == GroomingPhase.PHASE3_FEEDBACK:
-        msg = f"Draft Story generated:\n\n{state.final_story}\n\nType 'confirm' to accept, or provide your edits."
-        if state.feedback_retries > 0:
-            msg += f"\n(Revision {state.feedback_retries}/3)"
-        return msg
-        
-    if state.phase == GroomingPhase.DONE:
-        if state.feedback_retries >= 3:
-            return f"[Force Commit] Maximum revisions reached. Final Story locked:\n\n{state.final_story}"
-        return f"[Success] Jira Story finalized:\n\n{state.final_story}"
-        
-    return "Processing transition..."
+            # Check snapshot for pending interrupts (Human-in-the-Loop)
+            state_snapshot = graph.get_state(config)
+            if state_snapshot.next:
+                # Graph is blocked, waiting for human input
+                interrupt_val = state_snapshot.tasks[0].interrupts[0].value
+                print(f"\n[Action Required] {interrupt_val}")
+                
+                user_response = input("> ")
+                if user_response.strip().lower() == "exit":
+                    print("[Process Terminated]")
+                    break
+                
+                # Resume execution passing the human payload via Command API
+                current_input = Command(resume=user_response)
+            else:
+                # Execution queue exhausted
+                break
+                
+        except Exception as e:
+            print(f"[FATAL ERROR] Pipeline crashed at runtime: {e}")
+            break
 
 if __name__ == "__main__":
-    # Local CLI Simulation
-    mock_payload = {
-        "session": {}, 
-        "message": "Build a login page"
-    }
-    result = run_pipeline_step(mock_payload)
-    print(json.dumps(result, indent=2))
+    run_pipeline()
