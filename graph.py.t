@@ -5,12 +5,11 @@ from typing import Literal
 from pydantic import BaseModel, Field
 from langgraph.graph import StateGraph, START, END
 
-# Imports from your local files
 from state import WorkflowState, ExtractorOutput, ValidatorOutput, TechQuestionsOutput
 from llm_client import StructuredLLMClient
 
 # ---------------------------------------------------------
-# Robust Configuration Loading (Zero Blind Spots)
+# Configuration Loading
 # ---------------------------------------------------------
 CURRENT_DIR = Path(__file__).parent.absolute()
 PROMPTS_FILE = CURRENT_DIR / "prompts.yaml"
@@ -22,8 +21,6 @@ def load_prompts(file_path: Path) -> dict:
     try:
         with open(file_path, "r", encoding="utf-8-sig") as f:
             data = yaml.safe_load(f)
-        if not isinstance(data, dict) or "extractor" not in data:
-            raise KeyError("Invalid YAML structure or missing root keys.")
         return data
     except Exception as e:
         print(f"[INIT FATAL] Failed to parse prompts: {e}")
@@ -36,7 +33,7 @@ class FinalStoryOutput(BaseModel):
     story: str = Field(description="The fully synthesized Jira Agile Story")
 
 # ---------------------------------------------------------
-# Nodes Implementation
+# Nodes
 # ---------------------------------------------------------
 
 def phase0_extract(state: WorkflowState) -> dict:
@@ -97,21 +94,34 @@ def phase2_tech_lead(state: WorkflowState) -> dict:
         return {}
     sys_prompt = PROMPTS["tech_lead"]["system"].format(what=state["what"], why=state["why"])
     result = llm.query(sys_prompt, "Review and generate technical questions.", TechQuestionsOutput)
-    return {"pending_questions": result.questions, "current_phase": "phase2_ask"}
+    
+   
+    return {
+        "pending_questions": result.questions, 
+        "total_tech_questions": len(result.questions),
+        "current_phase": "phase2_ask"
+    }
 
 def phase2_ask_questions(state: WorkflowState) -> dict:
     questions = state.get("pending_questions", [])
+    total = state.get("total_tech_questions", 0)
+    
     if not questions:
         return {"current_phase": "phase3"}
     
+    # محاسبه شماره سوال فعلی
+    current_idx = (total - len(questions)) + 1
     current_q = questions[0]
+    
     if not state.get("user_injected_response"):
         instruction = "\n(Note: This is optional. Type 'skip' or 'I don't know' to move to the next question)"
-        return {"action_required": True, "action_prompt": f"🛠 [Technical Lead Question]:\n{current_q}{instruction}"}
+        return {
+            "action_required": True, 
+            "action_prompt": f"🛠 [Technical Lead Question {current_idx}/{total}]:\n{current_q}{instruction}"
+        }
 
     user_answer = state["user_injected_response"]
-    # Fast-path for skipping (Save LLM cost)
-    if user_answer.strip().lower() in ["skip", "i don't know", "idk", "next"]:
+    if user_answer.strip().lower() in ["skip", "i don't know", "idk", "next", "none"]:
         return {"pending_questions": questions[1:], "user_injected_response": None, "action_required": False,
                 "current_phase": "phase2_ask" if len(questions) > 1 else "phase3"}
 
@@ -150,9 +160,8 @@ def phase3_feedback(state: WorkflowState) -> dict:
             "user_injected_response": None, "action_required": False, "current_phase": "phase3"}
 
 # ---------------------------------------------------------
-# Routing Logic
+# Routing logic remains the same
 # ---------------------------------------------------------
-
 def route_start(state: WorkflowState) -> str:
     phase = state.get("current_phase", "phase0")
     routes = {"phase0": "phase0_extract", "phase1": "phase1_lock", "phase2": "phase2_tech_lead", 
