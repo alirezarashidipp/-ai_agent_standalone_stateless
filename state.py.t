@@ -1,52 +1,42 @@
 from enum import Enum
 from typing import List, Optional
-from pydantic import BaseModel, Field, ConfigDict
-from schemas import JiraAnalysis  # Importing your existing schema as the source
+from pydantic import BaseModel, Field
 
 class GroomingPhase(str, Enum):
-    """
-    Explicit phases for stateless routing.
-    Each phase correlates to a specific Node in LangGraph.
-    """
-    START = "start"
-    CLARIFYING = "clarifying"
-    REFINING_TECH = "refining_tech"
-    REVIEWING_AC = "reviewing_ac"
-    FINALIZING = "finalizing"
+    PHASE0_EXTRACT = "phase0_extract"
+    PHASE1_LOCK = "phase1_lock"
+    PHASE2_TECH_LEAD = "phase2_tech_lead"
+    PHASE2_ASK = "phase2_ask"
+    PHASE3_SYNTHESIZE = "phase3_synthesize"
+    PHASE3_FEEDBACK = "phase3_feedback"
     DONE = "done"
+    ABORTED = "aborted"
 
 class GroomingSession(BaseModel):
-    """
-    The Master State object. 
-    This is the ONLY object transferred between Client and Kubernetes/Spyder.
-    """
-    # 1. Flow Control
-    phase: GroomingPhase = Field(default=GroomingPhase.START)
-    
-    # 2. Core Data (Using your JiraAnalysis from schemas.py)
-    # This stores everything: Who, What, Why, Impact, AC, and Questions.
-    analysis: Optional[JiraAnalysis] = None
-    
-    # 3. Context & Tracking
+    # Routing & Core Flow
+    phase: GroomingPhase = Field(default=GroomingPhase.PHASE0_EXTRACT)
     last_user_message: str = ""
-    tech_question_idx: int = 0
     
-    # 4. Final Output storage
-    final_jira_story: Optional[str] = None
-
-    # Pydantic V2 Configuration for production performance and safety
-    model_config = ConfigDict(
-        use_enum_values=True,
-        validate_assignment=True,
-        populate_by_name=True,
-        arbitrary_types_allowed=True
-    )
-
-    def serialize(self) -> str:
-        """Converts state to JSON string for client-side storage."""
-        return self.model_dump_json()
-
-    @classmethod
-    def deserialize(cls, data: dict) -> "GroomingSession":
-        """Reconstructs state from client-provided dictionary."""
-        return cls(**data)
+    # Phase 0/1: Triad Core
+    raw_input: str = ""
+    who: Optional[str] = None
+    what: Optional[str] = None
+    why: Optional[str] = None
+    ac_evidence: Optional[str] = None
+    missing_fields: List[str] = Field(default_factory=list)
+    
+    # Phase 1: Triad Lock Controls
+    phase1_retries: int = 0
+    last_rejection_reason: Optional[str] = None
+    is_aborted: bool = False
+    abort_reason: Optional[str] = None
+    
+    # Phase 2: Tech Grooming
+    pending_questions: List[str] = Field(default_factory=list)
+    tech_notes: List[str] = Field(default_factory=list)
+    
+    # Phase 3: Synthesis & HITL
+    final_story: Optional[str] = None
+    feedback_retries: int = 0
+    feedback_raw: Optional[str] = None
+    is_complete: bool = False
